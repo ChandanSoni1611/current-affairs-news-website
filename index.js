@@ -1,514 +1,406 @@
-"use strict";
-
-const CFG = {
-  API_KEY: "4f0fd232ab8d4bd2bd6a37668ba6dafc",
-  BASE: "https://newsapi.org/v2/top-headlines",
-  COUNTRY: "in",
-  FALLBACK_SOURCE_INDIA: "google-news-in",
-  FALLBACK_COUNTRY: "us",
-  PAGE_SIZE: 8,
-  CHUNK_SIZE: 4,
+const CONFIG = {
+  BASE_URL: "https://newsapi.org/v2/everything",
+  API_KEY:  "4f0fd232ab8d4bd2bd6a37668ba6dafc",
+  PAGE_SIZE: 12,   // cards shown per "Load More" click
 };
 
-const TOP_SECTIONS = [
-  { id: "india-top",     label: "India",         category: "general",       country: "in", color: "var(--c-india)" },
-  { id: "business",      label: "Business",      category: "business",      country: "us", color: "var(--c-business)" },
-  { id: "technology",    label: "Technology",    category: "technology",    country: "us", color: "var(--c-technology)" },
-  { id: "sports",        label: "Sports",        category: "sports",        country: "gb", color: "var(--c-sports)" },
-  { id: "entertainment", label: "Entertainment", category: "entertainment", country: "us", color: "var(--c-entertainment)" },
-  { id: "health",        label: "Health",        category: "health",        country: "us", color: "var(--c-health)" },
-  { id: "science",       label: "Science",       category: "science",       country: "us", color: "var(--c-climate)" },
+const CATEGORIES = [
+  { id: "india",         label: "🇮🇳 India",          q: "India",                   lang: "en" },
+  { id: "general",       label: "🌐 Top News",         q: "breaking news",           lang: "en" },
+  { id: "technology",    label: "💻 Technology",       q: "technology",              lang: "en" },
+  { id: "sports",        label: "🏏 Sports",           q: "sports cricket",          lang: "en" },
+  { id: "entertainment", label: "🎬 Entertainment",    q: "bollywood entertainment", lang: "en" },
+  { id: "business",      label: "📈 Business",         q: "business economy",        lang: "en" },
+  { id: "science",       label: "🔬 Science & Health", q: "science health",          lang: "en" },
 ];
 
-const TAB_CFG = {
-  top:           { hero: true, sections: TOP_SECTIONS },
-  india:         { category: "general",       country: "in", color: "var(--c-india)",         label: "India News" },
-  global:        { global: true,              color: "var(--c-global)",  label: "Global News" },
-  business:      { category: "business",      country: "us", color: "var(--c-business)",      label: "Business" },
-  technology:    { category: "technology",    country: "us", color: "var(--c-technology)",    label: "Technology" },
-  entertainment: { category: "entertainment", country: "us", color: "var(--c-entertainment)", label: "Entertainment" },
-  climate:       { category: "science",       country: "us", color: "var(--c-climate)",       label: "Climate & Environment" },
-  sports:        { category: "sports",        country: "gb", color: "var(--c-sports)",        label: "Sports" },
-  health:        { category: "health",        country: "us", color: "var(--c-health)",        label: "Health & Science" },
+const EMOJI_MAP = {
+  india:"🇮🇳", general:"📰", technology:"💻",
+  sports:"🏏", entertainment:"🎬", business:"📈", science:"🔬",
 };
 
-const GLOBAL_COUNTRIES = [
-  { country: "us", label: "United States", flag: "🇺🇸" },
-  { country: "gb", label: "United Kingdom", flag: "🇬🇧" },
-  { country: "au", label: "Australia", flag: "🇦🇺" },
-  { country: "ca", label: "Canada", flag: "🇨🇦" },
-  { country: "fr", label: "France", flag: "🇫🇷" },
-  { country: "de", label: "Germany", flag: "🇩🇪" },
-  { country: "jp", label: "Japan", flag: "🇯🇵" },
-];
+// ── STATE ──
+let activeTab  = "india";
+let cache      = {};
+let pageIndex  = {};   // tracks how many cards shown per tab
+let darkMode   = localStorage.getItem("darkMode") === "true";
 
-const S = { tab: "top", loaded: new Set() };
-
-const $ = (id) => document.getElementById(id);
-const $$ = (sel) => document.querySelectorAll(sel);
-
-const D = {
-  tabBar:      $("tabBar"),
-  tabSlider:   $("tabSlider"),
-  mobTabs:     $("mobTabs"),
-  mobDrawer:   $("mobDrawer"),
-  ham:         $("ham"),
-  wSpinner:    $("wSpinner"),
-  wInfo:       $("wInfo"),
-  wIcon:       $("wIcon"),
-  wTemp:       $("wTemp"),
-  wLoc:        $("wLoc"),
-  tickerInner: $("tickerInner"),
-  dateChip:    $("dateChip"),
-  searchInput: $("searchInput"),
-  sClear:      $("sClear"),
-  heroSection: $("heroSection"),
-  streamTop:   $("streamTop"),
-};
-
-/* ── helpers ── */
-function timeAgo(d) {
-  if (!d) return "Recently";
-  const mins = Math.floor((Date.now() - new Date(d)) / 60000);
-  if (Number.isNaN(mins) || mins < 0) return "Recently";
-  if (mins < 2) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-function cut(s, n) { return s && s.length > n ? s.slice(0, n - 1) + "…" : (s || ""); }
-function safeText(v, fb = "") {
-  return String(v ?? fb).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-function safeUrl(url, fallback = "#") {
-  if (!url) return fallback;
-  try {
-    const u = new URL(url, window.location.origin);
-    return ["http:", "https:"].includes(u.protocol) ? u.toString() : fallback;
-  } catch {
-    return fallback;
-  }
-}
-function skCards(n = 4) { return Array(n).fill('<div class="art-skeleton"></div>').join(""); }
-function normalizeArticle(a) {
-  return { title: a?.title||"", desc: a?.description||"", url: a?.url||"",
-           image: a?.urlToImage||"", source: a?.source?.name||"Unknown", time: a?.publishedAt||"" };
-}
-function cleanArticles(list = []) {
-  const seen = new Set();
-  return list.map(normalizeArticle).filter(a => {
-    if (!a.title || !a.url) return false;
-    const t = a.title.trim().toLowerCase();
-    if (t === "[removed]" || t === "google news" || t.length < 10) return false;
-    if (seen.has(t)) return false;
-    seen.add(t); return true;
+// ── INIT ──
+document.addEventListener("DOMContentLoaded", () => {
+  applyDark();
+  setDate();
+  buildTabs();
+  loadTab(activeTab);
+  loadTicker();
+  checkSession(); // ← this line
+  document.getElementById("searchBtn").addEventListener("click", doSearch);
+  document.getElementById("searchInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doSearch();
   });
-}
-async function fetchJson(url) {
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok || data.status === "error") throw new Error(data.message || `HTTP ${res.status}`);
-  return data;
-}
+});
 
-/* ── news fetcher with India fallback chain ── */
-async function getNews(params = {}) {
-  if (params.global) return { articles: [] };
-  const buildUrl = (obj) => {
-    const u = new URL(CFG.BASE);
-    Object.entries(obj).forEach(([k,v]) => { if (v!=null && v!=="") u.searchParams.set(k,v); });
-    u.searchParams.set("apiKey", CFG.API_KEY);
-    return u.toString();
-  };
-  let articles = [];
-  const country = params.country || CFG.COUNTRY;
+function checkSession() {
+  const session = JSON.parse(localStorage.getItem("ca_session") || "{}");
+  const headerRight = document.querySelector(".header-right");
+  if (!headerRight) return;
 
-  if (country === "in") {
-    // India: try in → google-news-in → us fallback
-    for (const attempt of [
-      { country:"in", category:params.category, q:params.q, page:params.page||1, pageSize:params.pageSize||CFG.PAGE_SIZE },
-      { sources:CFG.FALLBACK_SOURCE_INDIA, page:params.page||1, pageSize:params.pageSize||CFG.PAGE_SIZE },
-      { country:"us", category:params.category, page:params.page||1, pageSize:params.pageSize||CFG.PAGE_SIZE },
-    ]) {
-      try {
-        const d = await fetchJson(buildUrl(attempt));
-        articles = cleanArticles(d.articles || []);
-        if (articles.length) return { articles, totalResults: d.totalResults || articles.length };
-      } catch(e) {}
-    }
+  if (session.loggedIn) {
+    const userEl = document.createElement("div");
+    userEl.className = "user-badge";
+    userEl.innerHTML = `
+      <span class="user-name">👤 ${session.name.split(" ")[0]}</span>
+      <button class="logout-btn" onclick="logout()">Logout</button>
+    `;
+    headerRight.prepend(userEl);
   } else {
-    // Non-India: fetch directly, no country label needed
-    try {
-      const d = await fetchJson(buildUrl({
-        country, category:params.category, q:params.q,
-        page:params.page||1, pageSize:params.pageSize||CFG.PAGE_SIZE
-      }));
-      articles = cleanArticles(d.articles || []);
-      return { articles, totalResults: d.totalResults || articles.length };
-    } catch(e) {}
+    const loginEl = document.createElement("a");
+    loginEl.href = "authentication/login.html";
+    loginEl.className = "login-link";
+    loginEl.textContent = "Login / Sign Up";
+    headerRight.prepend(loginEl);
   }
-  return { articles: [], totalResults: 0 };
 }
 
-/* ── weather / date ── */
-function initWeather() {
-  D.wSpinner.style.display = "none";
-  D.wInfo.style.display = "flex";
-  D.wIcon.textContent = "🌤️";
-  D.wTemp.textContent = "--°";
-  D.wLoc.textContent = "Location off";
-}
-function initDate() {
-  D.dateChip.textContent = new Date().toLocaleDateString("en-IN",
-    { weekday:"long", year:"numeric", month:"long", day:"numeric" });
+function logout() {
+  localStorage.removeItem("ca_session");
+  window.location.reload();
 }
 
-/* ── ticker ── */
+// ── DARK MODE ──
+function toggleDark() {
+  darkMode = !darkMode;
+  localStorage.setItem("darkMode", darkMode);
+  applyDark();
+}
+function applyDark() {
+  document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
+  const btn = document.getElementById("darkToggle");
+  if (btn) btn.textContent = darkMode ? "☀️ Light Mode" : "🌙 Dark Mode";
+}
+
+// ── DATE ──
+function setDate() {
+  document.getElementById("dateBar").textContent =
+    new Date().toLocaleDateString("en-IN", {
+      weekday:"long", year:"numeric", month:"long", day:"numeric",
+    });
+}
+
+// ── BREAKING NEWS TICKER ──
 async function loadTicker() {
   try {
-    const d = await getNews({ category:"general", country:"in", pageSize:10 });
-    D.tickerInner.textContent = d.articles.length
-      ? d.articles.map(a => a.title).join("  ◆  ")
-      : "No headlines available right now.";
-  } catch(e) { D.tickerInner.textContent = "Unable to load headlines."; }
-}
+    const params = new URLSearchParams({
+      apiKey:   CONFIG.API_KEY,
+      q:        "India breaking news",
+      language: "en",
+      pageSize: 10,
+      sortBy:   "publishedAt",
+    });
+    const res  = await fetch(`${CONFIG.BASE_URL}?${params}`);
+    const data = await res.json();
+    const headlines = (data.articles || [])
+      .filter(a => a.title && a.title !== "[Removed]")
+      .map(a => `📌 ${a.title}`)
+      .join("   ·   ");
 
-/* ── article card ── */
-function buildCard(a, color = "var(--ice-500)", idx = 0) {
-  const articleUrl = safeUrl(a.url);
-  const imageUrl = safeUrl(a.image, "");
-  const card = document.createElement("div");
-  card.className = "art-card";
-  card.style.animationDelay = `${idx * 0.055}s`;
-  card.style.setProperty("--sec-color", color);
-  const title  = safeText(cut(a.title, 100));
-  const source = safeText(a.source || "Unknown");
-  if (imageUrl) {
-    card.innerHTML = `
-      <div class="art-img">
-        <img src="${imageUrl}" alt="${title}" loading="lazy"
-             onerror="this.closest('.art-card').classList.add('no-image');this.parentElement.remove();" />
-        <span class="art-cat-badge">${source}</span>
-      </div>
-      <div class="art-body">
-        <div class="art-src">${source}</div>
-        <div class="art-title">${title}</div>
-        <div class="art-foot">
-          <span>${timeAgo(a.time)}</span>
-          <a class="art-read" href="${articleUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Read →</a>
-        </div>
-      </div>`;
-  } else {
-    card.classList.add("no-image");
-    card.innerHTML = `
-      <div class="art-body">
-        <div class="art-src">${source}</div>
-        <div class="art-title">${title}</div>
-        <div class="art-foot">
-          <span>${timeAgo(a.time)}</span>
-          <a class="art-read" href="${articleUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Read →</a>
-        </div>
-      </div>`;
+    if (headlines) {
+      document.getElementById("tickerContent").textContent = headlines;
+    }
+  } catch (e) {
+    document.getElementById("tickerContent").textContent = "📌 Stay tuned for the latest breaking news...";
   }
-  if (articleUrl !== "#") card.addEventListener("click", () => window.open(articleUrl, "_blank"));
-  return card;
 }
 
-/* ════════════════════════════════════════════
-   HERO — fixed: 2 sidebar cards + More button
-   ════════════════════════════════════════════ */
-async function loadHero() {
-  D.heroSection.innerHTML = `
-    <div class="hero-skeletons">
-      <div class="sk hero-sk-lead"></div>
-      <div class="sk-col"><div class="sk hero-sk-sub"></div><div class="sk hero-sk-sub"></div></div>
-    </div>`;
+// ── BUILD TABS ──
+function buildTabs() {
+  const nav = document.getElementById("tabNav");
+  CATEGORIES.forEach((cat) => {
+    const btn = document.createElement("button");
+    btn.className = "tab-btn" + (cat.id === activeTab ? " active" : "");
+    btn.textContent = cat.label;
+    btn.dataset.id  = cat.id;
+    btn.addEventListener("click", () => switchTab(cat.id));
+    nav.appendChild(btn);
+  });
+}
+
+// ── SWITCH TAB ──
+function switchTab(id) {
+  activeTab = id;
+  document.querySelectorAll(".tab-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.id === id);
+  });
+  loadTab(id);
+}
+
+// ── FETCH NEWS ──
+async function fetchNews(cat) {
+  if (cache[cat.id]) return cache[cat.id];
+
+  const params = new URLSearchParams({
+    apiKey:   CONFIG.API_KEY,
+    q:        cat.q,
+    language: "en",
+    pageSize: 30,
+    sortBy:   "publishedAt",
+  });
+
+  const res  = await fetch(`${CONFIG.BASE_URL}?${params}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  const data     = await res.json();
+  const articles = (data.articles || [])
+    .filter((a) => a.title && a.title !== "[Removed]")
+    .map((a) => ({
+      title:       a.title,
+      description: a.description,
+      url:         a.url,
+      image:       a.urlToImage,
+      source:      a.source?.name,
+      publishedAt: a.publishedAt,
+    }));
+
+  cache[cat.id]  = articles;
+  pageIndex[cat.id] = CONFIG.PAGE_SIZE; // start showing first 9
+  return articles;
+}
+
+// ── LOAD TAB ──
+async function loadTab(id) {
+  const main = document.getElementById("mainContent");
+  main.innerHTML = `<div class="loader-wrap"><div class="spinner"></div><p>Loading news...</p></div>`;
+
+  const cat = CATEGORIES.find((c) => c.id === id);
   try {
-    const d = await getNews({ category:"general", country:"in", pageSize:12 });
-    const arts = d.articles;
-    if (!arts.length) {
-      D.heroSection.innerHTML = `<div class="err-state"><h3>No top stories available</h3></div>`;
+    const articles = await fetchNews(cat);
+    if (!articles.length) {
+      main.innerHTML = `<div class="error-box">No articles found. Try again later.</div>`;
       return;
     }
-    const lead         = arts[0];
-    const sideArticles = arts.slice(1, 3);   // always grab 2
-
-    const leadUrl = safeUrl(lead.url);
-    const leadImageUrl = safeUrl(lead.image, "");
-    D.heroSection.innerHTML = `
-      <div class="hero-grid-fill">
-        <div class="hero-lead" ${leadUrl !== "#" ? `onclick="window.open('${leadUrl}','_blank')"` : ""}>
-          ${leadImageUrl ? `<img src="${leadImageUrl}" alt="${safeText(lead.title)}" onerror="this.remove()" />` : ""}
-          <div class="hero-lead-overlay"></div>
-          <div class="hero-lead-body">
-            <span class="hero-lead-cat">Top Story</span>
-            <h2>${safeText(cut(lead.title, 130))}</h2>
-            <div class="hero-lead-meta">
-              <span>${safeText(lead.source||"Unknown")}</span>
-              <span>·</span>
-              <span>${timeAgo(lead.time)}</span>
-            </div>
-          </div>
-        </div>
-        <div class="hero-side-fill" id="heroSideFill"></div>
-      </div>
-      <div class="hero-more-wrap">
-        <button class="btn-load" id="heroMoreBtn">More Top News</button>
-      </div>`;
-
-    /* ── populate sidebar with 2 mini-cards ── */
-    const side = $("heroSideFill");
-    sideArticles.forEach(a => {
-      const url = safeUrl(a.url);
-      const imageUrl = safeUrl(a.image, "");
-      const el = document.createElement("div");
-      el.className = "hero-mini-card";
-      el.innerHTML = `
-        ${imageUrl ? `<div class="hero-mini-img"><img src="${imageUrl}" alt="${safeText(a.title)}" loading="lazy" onerror="this.parentElement.remove()" /></div>` : ""}
-        <div class="hero-mini-body">
-          <div class="hero-mini-src">${safeText(a.source||"News")}</div>
-          <h3>${safeText(cut(a.title, 95))}</h3>
-          <div class="hero-mini-meta">${timeAgo(a.time)}</div>
-        </div>`;
-      if (url !== "#") el.addEventListener("click", () => window.open(url, "_blank"));
-      side.appendChild(el);
-    });
-
-    /* If fewer than 2 side articles, fill remaining slots with text-only placeholders
-       so the grid never looks empty */
-    while (side.children.length < 2) {
-      const ph = document.createElement("div");
-      ph.className = "hero-mini-card";
-      ph.style.background = "var(--bg-soft)";
-      side.appendChild(ph);
-    }
-
-    $("heroMoreBtn")?.addEventListener("click", () => switchTab("india"));
-  } catch(e) {
-    D.heroSection.innerHTML = `<div class="err-state"><h3>${safeText(e.message)}</h3></div>`;
+    renderArticles(articles, cat);
+  } catch (e) {
+    main.innerHTML = `<div class="error-box">❌ Could not load news.<br><small>${e.message}</small></div>`;
   }
 }
 
-/* ════════════════════════════════════════════
-   TOP STREAM — sections with proper pagination
-   Always show in groups of 4; "More" appends
-   next 4 (never re-renders the whole grid).
-   ════════════════════════════════════════════ */
-async function loadTopStream() {
-  D.streamTop.innerHTML = "";
-  for (const sec of TOP_SECTIONS) {
-    const block = document.createElement("div");
-    block.className = "news-section";
-    block.style.setProperty("--sec-color", sec.color);
-    block.innerHTML = `
-      <div class="sec-heading">
-        <h2>${sec.label}</h2>
-        <span class="sec-count" id="sc-${sec.id}"></span>
-      </div>
-      <div class="sec-grid" id="sg-${sec.id}">${skCards(4)}</div>
-      <div class="load-wrap">
-        <button class="btn-load" id="more-${sec.id}" style="display:none;">More ${sec.label} News</button>
-      </div>`;
-    D.streamTop.appendChild(block);
+// ── RENDER ARTICLES ──
+function renderArticles(articles, cat) {
+  const main  = document.getElementById("mainContent");
+  const emoji = EMOJI_MAP[cat.id] || "📰";
 
-    getNews({ category:sec.category, country:sec.country, pageSize:40 })
-      .then(d => {
-        const grid = $(`sg-${sec.id}`);
-        const btn  = $(`more-${sec.id}`);
-        const all  = d.articles || [];
+  totalSlides  = Math.min(5, articles.length);
+  currentSlide = 0;
 
-        grid.innerHTML = "";
+  const rest  = articles.slice(5); // cards start after top 5
+  const shown = Math.min(CONFIG.PAGE_SIZE, rest.length);
+  const hasMore = shown < rest.length;
 
-        if (!all.length) {
-          grid.innerHTML = `<div class="err-state"><h3>No articles</h3></div>`;
-          return;
-        }
+  main.innerHTML =
+    buildHeroSlider(articles, cat, emoji) +
+    `<div class="section-title">${cat.label} — Latest Stories</div>` +
+    `<div class="news-grid" id="newsGrid">
+       ${rest.slice(0, shown).map((a, i) => buildCard(a, i, emoji)).join("")}
+     </div>` +
+    (hasMore
+      ? `<div class="load-more-wrap">
+           <button class="load-more-btn" onclick="loadMore('${cat.id}')">Load More Articles</button>
+         </div>`
+      : "");
 
-        renderPaginatedGrid({
-          grid,
-          button: btn,
-          buttonLabel: `More ${sec.label} News`,
-          articles: all,
-          color: sec.color
-        });
+  // start auto slider after DOM is ready
+  setTimeout(() => startSliderAuto(), 100);
+}
 
-        const cnt = $(`sc-${sec.id}`);
-        if (cnt) cnt.textContent = `${all.length}`;
-      })
-      .catch(e => {
-        const grid = $(`sg-${sec.id}`);
-        if (grid) grid.innerHTML = `<div class="err-state"><h3>${safeText(e.message)}</h3></div>`;
-      });
+// ── LOAD MORE ──
+function loadMore(catId) {
+  const cat      = CATEGORIES.find(c => c.id === catId);
+  const articles = cache[catId];
+  const emoji    = EMOJI_MAP[catId] || "📰";
+
+  pageIndex[catId] = (pageIndex[catId] || CONFIG.PAGE_SIZE) + CONFIG.PAGE_SIZE;
+  const shown    = pageIndex[catId];
+  const rest     = articles.slice(5); // always skip first 5 (slider)
+  const newCards = rest.slice(0, shown);
+  const hasMore  = shown < rest.length;
+
+  const grid = document.getElementById("newsGrid");
+  if (grid) grid.innerHTML = newCards.map((a, i) => buildCard(a, i, emoji)).join("");
+
+  const wrap = document.querySelector(".load-more-wrap");
+  if (wrap) {
+    wrap.innerHTML = hasMore
+      ? `<button class="load-more-btn" onclick="loadMore('${catId}')">Load More Articles</button>`
+      : `<p style="color:var(--text-muted);font-size:13px;text-align:center;">All articles loaded ✓</p>`;
   }
 }
 
-/* ════════════════════════════════════════════
-   CATEGORY PANEL — same append-only approach
-   ════════════════════════════════════════════ */
-async function loadCategoryPanel(tabId) {
-  const cfg   = TAB_CFG[tabId];
-  const panel = $(`panel-${tabId}`);
-  if (!panel) return;
-  if (tabId === "global") { await loadGlobalPanel(); return; }
+// ── SEARCH (main feed) ──
+async function doSearch() {
+  const query = document.getElementById("searchInput").value.trim();
+  if (!query) return;
 
-  panel.innerHTML = `
-    <div class="cat-panel-wrap">
-      <div class="cat-header" style="--sec-color:${cfg.color}">
-        <div class="cat-dot"></div>
-        <h1>${cfg.label}</h1>
-        <span class="cat-count" id="cc-${tabId}"></span>
-      </div>
-      <div class="sec-grid" id="cg-${tabId}">${skCards(4)}</div>
-      <div class="load-wrap">
-        <button class="btn-load" id="cl-${tabId}" style="display:none;">More ${cfg.label} News</button>
-      </div>
-    </div>`;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+  const main = document.getElementById("mainContent");
+  main.innerHTML = `<div class="loader-wrap"><div class="spinner"></div><p>Searching for "${query}"...</p></div>`;
 
   try {
-    const d    = await getNews({ category:cfg.category, country:cfg.country, pageSize:40 });
-    const grid = $(`cg-${tabId}`);
-    const btn  = $(`cl-${tabId}`);
-    const all  = d.articles || [];
+    const params = new URLSearchParams({
+      apiKey:   CONFIG.API_KEY,
+      q:        query,
+      language: "en",
+      pageSize: 31,
+      sortBy:   "publishedAt",
+    });
+    const res  = await fetch(`${CONFIG.BASE_URL}?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    grid.innerHTML = "";
+    const data     = await res.json();
+    const articles = (data.articles || [])
+      .filter(a => a.title && a.title !== "[Removed]")
+      .map(a => ({
+        title:       a.title,
+        description: a.description,
+        url:         a.url,
+        image:       a.urlToImage,
+        source:      a.source?.name,
+        publishedAt: a.publishedAt,
+      }));
 
-    if (!all.length) {
-      grid.innerHTML = `<div class="err-state"><h3>No articles found</h3></div>`;
+    if (!articles.length) {
+      main.innerHTML = `<div class="error-box">No results for "<strong>${query}</strong>". Try a different keyword.</div>`;
       return;
     }
 
-    renderPaginatedGrid({
-      grid,
-      button: btn,
-      buttonLabel: `More ${cfg.label} News`,
-      articles: all,
-      color: cfg.color
-    });
+    const hero = articles[0];
+    const rest = articles.slice(1);
+    main.innerHTML =
+      `<p class="search-label">Results for: <span>"${query}"</span></p>` +
+      buildHero(hero, { id:"search", label:"🔍 Search" }, "🔍") +
+      `<div class="section-title">🔍 Results — ${query}</div>` +
+      `<div class="news-grid">${rest.map((a,i) => buildCard(a, i, "🔍")).join("")}</div>`;
 
-    const count = $(`cc-${tabId}`);
-    if (count) count.textContent = `${all.length} stories`;
-  } catch(e) {
-    panel.innerHTML = `<div class="err-state"><h3>${safeText(e.message)}</h3></div>`;
+  } catch (e) {
+    main.innerHTML = `<div class="error-box">❌ Search failed.<br><small>${e.message}</small></div>`;
   }
 }
 
-function renderPaginatedGrid({ grid, button, buttonLabel, articles, color }) {
-  let shown = 0;
-  if (button && buttonLabel) button.textContent = buttonLabel;
+// ── BUILD HERO SLIDER ──
+function buildHeroSlider(articles, cat, emoji) {
+  const top5 = articles.slice(0, 5);
 
-  function appendChunk() {
-    const chunk = articles.slice(shown, shown + CFG.CHUNK_SIZE);
-    chunk.forEach((a, i) => grid.appendChild(buildCard(a, color, shown + i)));
-    shown += chunk.length;
-    if (button) button.style.display = shown < articles.length ? "inline-block" : "none";
-  }
+  const slides = top5.map((article, i) => {
+    const imgHtml = article.image
+      ? `<img class="hero-img" src="${article.image}" alt="${escHtml(article.title)}"
+           onerror="this.style.display='none'">`
+      : `<div class="hero-img-placeholder">${emoji}</div>`;
 
-  appendChunk();
-  button?.addEventListener("click", appendChunk);
-}
+    const tagLabel = cat.label.replace(/[^\w\s]/g, "").trim();
+    const source   = escHtml(article.source?.name || article.source || "");
+    const time     = timeAgo(article.publishedAt);
 
-/* ── global panel ── */
-async function loadGlobalPanel() {
-  const panel = $("panel-global");
-  const color = "var(--c-global)";
-  panel.innerHTML = `
-    <div class="cat-panel-wrap">
-      <div class="cat-header" style="--sec-color:${color}">
-        <div class="cat-dot"></div>
-        <h1>Global News</h1>
-        <span class="cat-count">Top stories from around the world</span>
+    return `
+      <a class="hero-slide ${i === 0 ? 'active' : ''}"
+         href="${article.url || '#'}" target="_blank" rel="noopener"
+         data-index="${i}">
+        ${imgHtml}
+        <div class="hero-content">
+          <span class="hero-tag">${tagLabel}</span>
+          <h2 class="hero-title">${escHtml(article.title)}</h2>
+          <p class="hero-desc">${escHtml(article.description || "")}</p>
+          <p class="hero-meta"><span>${source}</span>&nbsp;·&nbsp;${time}</p>
+        </div>
+      </a>`;
+  }).join("");
+
+  const dots = top5.map((_, i) =>
+    `<button class="hero-dot ${i === 0 ? 'active' : ''}" onclick="goToSlide(${i})"></button>`
+  ).join("");
+
+  return `
+    <div class="hero-slider" id="heroSlider">
+      <div class="hero-slides-wrap" id="heroSlidesWrap">
+        ${slides}
       </div>
-      <div id="global-stream"></div>
+      <button class="hero-arrow left"  onclick="shiftSlide(-1)">&#8592;</button>
+      <button class="hero-arrow right" onclick="shiftSlide(1)">&#8594;</button>
+      <div class="hero-dots" id="heroDots">${dots}</div>
     </div>`;
-  const stream = $("global-stream");
-  for (const c of GLOBAL_COUNTRIES) {
-    const block = document.createElement("div");
-    block.className = "news-section";
-    block.style.setProperty("--sec-color", color);
-    block.innerHTML = `
-      <div class="sec-heading"><h2>${c.flag} ${c.label}</h2></div>
-      <div class="sec-grid" id="gg-${c.country}">${skCards(4)}</div>`;
-    stream.appendChild(block);
-    getNews({ category:"general", country:c.country, pageSize:4 })
-      .then(d => {
-        const g = $(`gg-${c.country}`);
-        g.innerHTML = "";
-        if (!d.articles.length) { g.innerHTML = `<div class="err-state"><h3>No articles</h3></div>`; return; }
-        d.articles.forEach((a, i) => g.appendChild(buildCard(a, color, i)));
-      })
-      .catch(e => {
-        const g = $(`gg-${c.country}`);
-        if (g) g.innerHTML = `<div class="err-state"><h3>${safeText(e.message)}</h3></div>`;
-      });
-  }
 }
 
-/* ── tab slider ── */
-function moveSlider() {
-  const active = D.tabBar?.querySelector(".tab.active");
-  if (!active || !D.tabSlider) return;
-  const bar = D.tabBar.getBoundingClientRect();
-  const btn = active.getBoundingClientRect();
-  D.tabSlider.style.left  = `${btn.left - bar.left}px`;
-  D.tabSlider.style.width = `${btn.width}px`;
+// ── SLIDER STATE ──
+let currentSlide  = 0;
+let totalSlides   = 5;
+let sliderTimer   = null;
+
+function startSliderAuto() {
+  stopSliderAuto();
+  sliderTimer = setInterval(() => shiftSlide(1), 4000);
+}
+function stopSliderAuto() {
+  if (sliderTimer) clearInterval(sliderTimer);
 }
 
-/* ── tab switching ── */
-async function switchTab(tabId) {
-  S.tab = tabId;
-  $$(".tab").forEach(t => { const a = t.dataset.tab===tabId; t.classList.toggle("active",a); t.setAttribute("aria-selected",a); });
-  $$(".mtab").forEach(t => t.classList.toggle("active", t.dataset.tab===tabId));
-  moveSlider();
-  $$(".panel").forEach(p => p.classList.toggle("active", p.id===`panel-${tabId}`));
-  if (tabId !== "top" && !S.loaded.has(tabId)) { S.loaded.add(tabId); await loadCategoryPanel(tabId); }
-  window.scrollTo({ top:0, behavior:"smooth" });
+function goToSlide(index) {
+  currentSlide = (index + totalSlides) % totalSlides;
+  updateSlider();
+  startSliderAuto(); // reset timer on manual click
 }
 
-/* ── init ── */
-function initTabs() {
-  D.tabBar?.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => switchTab(t.dataset.tab)));
-  D.mobTabs?.querySelectorAll(".mtab").forEach(t => t.addEventListener("click", () => switchTab(t.dataset.tab)));
-  setTimeout(moveSlider, 100);
-  window.addEventListener("resize", moveSlider);
+function shiftSlide(dir) {
+  currentSlide = (currentSlide + dir + totalSlides) % totalSlides;
+  updateSlider();
 }
-function initHam() {
-  D.ham?.addEventListener("click", () => {
-    const open = D.ham.classList.toggle("open");
-    D.mobDrawer?.classList.toggle("open", open);
+
+function updateSlider() {
+  // update slides
+  document.querySelectorAll(".hero-slide").forEach((s, i) => {
+    s.classList.toggle("active", i === currentSlide);
+    s.classList.toggle("prev",   i === (currentSlide - 1 + totalSlides) % totalSlides);
   });
-}
-function initSearch() {
-  if (!D.searchInput || !D.sClear) return;
-  D.searchInput.addEventListener("input", () => {
-    D.sClear.style.display = D.searchInput.value.trim() ? "inline" : "none";
-  });
-  D.sClear.addEventListener("click", () => { D.searchInput.value=""; D.sClear.style.display="none"; });
-  D.searchInput.addEventListener("keydown", async e => {
-    if (e.key !== "Enter") return;
-    const q = D.searchInput.value.trim();
-    if (!q) return;
-    D.streamTop.innerHTML = `
-      <div class="cat-panel-wrap">
-        <div class="cat-header" style="--sec-color:var(--ice-500)"><div class="cat-dot"></div><h1>Search Results</h1></div>
-        <div class="sec-grid" id="search-grid">${skCards(8)}</div>
-      </div>`;
-    await switchTab("top");
-    try {
-      const data = await fetchJson(`${CFG.BASE}?q=${encodeURIComponent(q)}&country=us&pageSize=8&apiKey=${CFG.API_KEY}`);
-      const arts = cleanArticles(data.articles || []);
-      const grid = $("search-grid");
-      grid.innerHTML = "";
-      if (!arts.length) { grid.innerHTML = `<div class="err-state"><h3>No results found</h3></div>`; return; }
-      arts.forEach((a,i) => grid.appendChild(buildCard(a,"var(--ice-500)",i)));
-    } catch(e2) {
-      const grid = $("search-grid");
-      if (grid) grid.innerHTML = `<div class="err-state"><h3>${safeText(e2.message)}</h3></div>`;
-    }
+  // update dots
+  document.querySelectorAll(".hero-dot").forEach((d, i) => {
+    d.classList.toggle("active", i === currentSlide);
   });
 }
 
-(async function init() {
-  initDate(); initWeather(); initTabs(); initHam(); initSearch();
-  await Promise.all([loadHero(), loadTicker(), loadTopStream()]);
-})();
+// ── BUILD CARD ──
+function buildCard(article, index, emoji) {
+  const imgHtml = article.image
+    ? `<img src="${article.image}" alt="${escHtml(article.title)}" loading="lazy"
+         onerror="this.parentElement.innerHTML='<div class=\\'card-img-placeholder\\'>${emoji}</div>'">`
+    : `<div class="card-img-placeholder">${emoji}</div>`;
+
+  const source = escHtml(article.source?.name || article.source || "");
+  const time   = timeAgo(article.publishedAt);
+
+  return `
+    <a class="news-card" href="${article.url || "#"}" target="_blank" rel="noopener">
+      <div class="card-img-wrap">${imgHtml}</div>
+      <div class="card-body">
+        <div class="card-source">${source}</div>
+        <div class="card-title">${escHtml(article.title)}</div>
+        <div class="card-desc">${escHtml(article.description || "")}</div>
+        <div class="card-meta">${time}</div>
+      </div>
+    </a>`;
+}
+
+// ── TIME AGO ──
+function timeAgo(dateStr) {
+  if (!dateStr) return "";
+  const diff = (Date.now() - new Date(dateStr)) / 1000;
+  if (diff < 60)    return "just now";
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+// ── ESCAPE HTML ──
+function escHtml(str) {
+  if (!str) return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}

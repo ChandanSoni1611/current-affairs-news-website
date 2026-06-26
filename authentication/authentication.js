@@ -1,254 +1,172 @@
-/* ============================================================
-   NEWSWAVE — Authentication JavaScript
-   Handles login & signup form validation + UX
-   ============================================================ */
-
 "use strict";
-
-// ─────────────────────────────────────────────
-// UTILITIES
-// ─────────────────────────────────────────────
 
 function $(id) { return document.getElementById(id); }
 
-function setError(fieldId, message) {
+// ── HELPERS ──
+function setError(fieldId, msg) {
   const fg  = $(`fg-${fieldId}`);
   const err = $(`err-${fieldId}`);
-  if (fg)  fg.classList.add("has-error");
-  if (fg)  fg.classList.remove("is-valid");
-  if (err) err.textContent = message;
+  if (fg)  { fg.classList.add("has-error"); fg.classList.remove("is-valid"); }
+  if (err) err.textContent = msg;
 }
-
 function setValid(fieldId) {
   const fg  = $(`fg-${fieldId}`);
   const err = $(`err-${fieldId}`);
-  if (fg)  fg.classList.remove("has-error");
-  if (fg)  fg.classList.add("is-valid");
+  if (fg)  { fg.classList.remove("has-error"); fg.classList.add("is-valid"); }
   if (err) err.textContent = "";
 }
-
 function clearField(fieldId) {
   const fg  = $(`fg-${fieldId}`);
   const err = $(`err-${fieldId}`);
   if (fg)  fg.classList.remove("has-error", "is-valid");
   if (err) err.textContent = "";
 }
-
-function showAlert(type, message) {
+function showAlert(type, msg) {
   const el = $("formAlert");
   if (!el) return;
   el.className = `form-alert ${type}`;
-  el.textContent = message;
+  el.textContent = msg;
 }
-
-function hideAlert() {
-  const el = $("formAlert");
-  if (!el) return;
-  el.className = "form-alert";
-  el.textContent = "";
-}
-
-function setLoading(isLoading) {
+function setLoading(on) {
   const btn = $("submitBtn");
   if (!btn) return;
-  btn.disabled = isLoading;
-  btn.classList.toggle("loading", isLoading);
+  btn.disabled = on;
+  btn.classList.toggle("loading", on);
 }
-
-// Validate email format
 function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+function getStrength(pw) {
+  let s = 0;
+  if (pw.length >= 8)           s++;
+  if (/[A-Z]/.test(pw))         s++;
+  if (/[0-9]/.test(pw))         s++;
+  if (/[^A-Za-z0-9]/.test(pw)) s++;
+  return s;
 }
 
-// ─────────────────────────────────────────────
-// SOCIAL LOGIN (stub — wire up your OAuth here)
-// ─────────────────────────────────────────────
-window.socialLogin = function(provider) {
-  showAlert("success", `Redirecting to ${provider}… (connect your OAuth provider)`);
-};
-
-// ─────────────────────────────────────────────
-// PASSWORD TOGGLE
-// ─────────────────────────────────────────────
+// ── PASSWORD TOGGLE ──
 const togglePw = $("togglePw");
 if (togglePw) {
   togglePw.addEventListener("click", () => {
     const pw = $("password");
     if (!pw) return;
-    const isText = pw.type === "text";
-    pw.type = isText ? "password" : "text";
-    togglePw.textContent = isText ? "👁" : "🙈";
+    pw.type = pw.type === "password" ? "text" : "password";
   });
 }
 
-// ─────────────────────────────────────────────
-// PASSWORD STRENGTH METER (signup only)
-// ─────────────────────────────────────────────
-const pwInput   = $("password");
-const pwBar     = $("pwBar");
-const pwLabel   = $("pwLabel");
+// ── PASSWORD STRENGTH (signup only) ──
+const pwInput = $("password");
+const fill    = $("strengthFill");
+const label   = $("strengthLabel");
 
-if (pwInput && pwBar && pwLabel) {
+if (pwInput && fill && label) {
   pwInput.addEventListener("input", () => {
-    const val = pwInput.value;
-    const score = getPasswordScore(val);
+    const s = getStrength(pwInput.value);
     const levels = [
-      { pct: 0,   color: "transparent",     label: "" },
-      { pct: 25,  color: "#ff6b6b",         label: "Weak" },
-      { pct: 50,  color: "#f5c842",         label: "Fair" },
-      { pct: 75,  color: "#4f83ff",         label: "Good" },
-      { pct: 100, color: "#00e5a0",         label: "Strong" },
+      { w: "0%",   c: "transparent", l: ""        },
+      { w: "25%",  c: "#ef4444",     l: "Weak"    },
+      { w: "50%",  c: "#f59e0b",     l: "Fair"    },
+      { w: "75%",  c: "#3b82f6",     l: "Good"    },
+      { w: "100%", c: "#10b981",     l: "Strong"  },
     ];
-    const { pct, color, label } = levels[score];
-    pwBar.style.width     = `${pct}%`;
-    pwBar.style.background = color;
-    pwLabel.textContent   = val.length ? label : "";
-    pwLabel.style.color   = color;
+    fill.style.width      = levels[s].w;
+    fill.style.background = levels[s].c;
+    label.textContent     = pwInput.value ? levels[s].l : "";
+    label.style.color     = levels[s].c;
   });
 }
 
-function getPasswordScore(pw) {
-  if (!pw.length) return 0;
-  let score = 0;
-  if (pw.length >= 8)                     score++;
-  if (/[A-Z]/.test(pw))                  score++;
-  if (/[0-9]/.test(pw))                  score++;
-  if (/[^A-Za-z0-9]/.test(pw))          score++;
-  return score;
-}
+// ── SOCIAL LOGIN ──
+window.socialLogin = function(provider) {
+  showAlert("success", `${provider} login coming soon!`);
+};
 
-// ─────────────────────────────────────────────
-// LOGIN FORM
-// ─────────────────────────────────────────────
+// ── LOGIN FORM ──
 const loginForm = $("loginForm");
 if (loginForm) {
   loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    hideAlert();
-
-    const email    = $("email")?.value.trim() || "";
-    const password = $("password")?.value || "";
+    const email    = $("email")?.value.trim()  || "";
+    const password = $("password")?.value      || "";
     let valid = true;
 
-    // Validate email
     clearField("email");
-    if (!email) {
-      setError("email", "Email is required."); valid = false;
-    } else if (!isValidEmail(email)) {
-      setError("email", "Enter a valid email address."); valid = false;
-    } else {
-      setValid("email");
-    }
+    if (!email)                { setError("email", "Email is required.");           valid = false; }
+    else if (!isValidEmail(email)) { setError("email", "Enter a valid email."); valid = false; }
+    else                       setValid("email");
 
-    // Validate password
     clearField("password");
-    if (!password) {
-      setError("password", "Password is required."); valid = false;
-    } else if (password.length < 6) {
-      setError("password", "Password must be at least 6 characters."); valid = false;
-    } else {
-      setValid("password");
-    }
+    if (!password)             { setError("password", "Password is required.");     valid = false; }
+    else if (password.length < 6) { setError("password", "Min. 6 characters.");    valid = false; }
+    else                       setValid("password");
 
     if (!valid) return;
 
-    // ── Simulate API call (replace with your real auth logic) ──
     setLoading(true);
+    await new Promise(r => setTimeout(r, 900));
 
-    try {
-      await simulateApiCall(1200);
+    const users = JSON.parse(localStorage.getItem("ca_users") || "[]");
+    const user  = users.find(u => u.email === email && u.password === btoa(password));
 
-      // SUCCESS — redirect or store token
-      showAlert("success", "✓ Signed in! Redirecting to home…");
-      setTimeout(() => {
-        window.location.href = "../index.html";
-      }, 1200);
-
-    } catch (err) {
-      showAlert("error", "Invalid email or password. Please try again.");
-    } finally {
+    if (!user) {
+      showAlert("error", "Invalid email or password.");
       setLoading(false);
+      return;
     }
-  });
 
-  // Real-time email validation
-  $("email")?.addEventListener("blur", () => {
-    const val = $("email")?.value.trim();
-    if (!val) return;
-    if (!isValidEmail(val)) setError("email", "Enter a valid email address.");
-    else setValid("email");
+    localStorage.setItem("ca_session", JSON.stringify({
+      name:     user.firstname + " " + user.lastname,
+      email:    user.email,
+      loggedIn: true,
+    }));
+
+    showAlert("success", `✓ Welcome back, ${user.firstname}! Redirecting...`);
+    setTimeout(() => { window.location.href = "../index.html"; }, 1200);
+    setLoading(false);
   });
 }
 
-// ─────────────────────────────────────────────
-// SIGNUP FORM
-// ─────────────────────────────────────────────
+// ── SIGNUP FORM ──
 const signupForm = $("signupForm");
 if (signupForm) {
   signupForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    hideAlert();
-
     const firstname = $("firstname")?.value.trim() || "";
     const lastname  = $("lastname")?.value.trim()  || "";
-    const email     = $("email")?.value.trim()      || "";
-    const password  = $("password")?.value          || "";
-    const confirm   = $("confirm")?.value           || "";
+    const email     = $("email")?.value.trim()     || "";
+    const password  = $("password")?.value         || "";
+    const confirm   = $("confirm")?.value          || "";
     const terms     = $("terms")?.checked;
     let valid = true;
 
-    // First name
     clearField("firstname");
-    if (!firstname) {
-      setError("firstname", "First name required."); valid = false;
-    } else {
-      setValid("firstname");
-    }
+    if (!firstname) { setError("firstname", "First name required."); valid = false; }
+    else setValid("firstname");
 
-    // Last name
     clearField("lastname");
-    if (!lastname) {
-      setError("lastname", "Last name required."); valid = false;
-    } else {
-      setValid("lastname");
-    }
+    if (!lastname) { setError("lastname", "Last name required."); valid = false; }
+    else setValid("lastname");
 
-    // Email
     clearField("email");
-    if (!email) {
-      setError("email", "Email is required."); valid = false;
-    } else if (!isValidEmail(email)) {
-      setError("email", "Enter a valid email address."); valid = false;
-    } else {
-      setValid("email");
-    }
+    if (!email)                    { setError("email", "Email is required.");     valid = false; }
+    else if (!isValidEmail(email)) { setError("email", "Enter a valid email.");   valid = false; }
+    else setValid("email");
 
-    // Password
     clearField("password");
-    if (!password) {
-      setError("password", "Password is required."); valid = false;
-    } else if (password.length < 8) {
-      setError("password", "Password must be at least 8 characters."); valid = false;
-    } else if (getPasswordScore(password) < 2) {
-      setError("password", "Password is too weak. Add numbers or symbols."); valid = false;
-    } else {
-      setValid("password");
-    }
+    if (!password)              { setError("password", "Password is required.");  valid = false; }
+    else if (password.length < 8) { setError("password", "Min. 8 characters.");  valid = false; }
+    else if (getStrength(password) < 2) { setError("password", "Too weak.");      valid = false; }
+    else setValid("password");
 
-    // Confirm password
     clearField("confirm");
-    if (!confirm) {
-      setError("confirm", "Please confirm your password."); valid = false;
-    } else if (confirm !== password) {
-      setError("confirm", "Passwords do not match."); valid = false;
-    } else {
-      setValid("confirm");
-    }
+    if (!confirm)            { setError("confirm", "Please confirm password.");   valid = false; }
+    else if (confirm !== password) { setError("confirm", "Passwords don't match."); valid = false; }
+    else setValid("confirm");
 
-    // Terms
     const errTerms = $("err-terms");
     if (!terms) {
-      if (errTerms) errTerms.textContent = "You must accept the terms to continue.";
+      if (errTerms) errTerms.textContent = "You must accept the terms.";
       valid = false;
     } else {
       if (errTerms) errTerms.textContent = "";
@@ -256,67 +174,33 @@ if (signupForm) {
 
     if (!valid) return;
 
-    // ── Simulate API call ──
     setLoading(true);
+    await new Promise(r => setTimeout(r, 900));
 
-    try {
-      await simulateApiCall(1500);
-
-      showAlert("success", "✓ Account created! Welcome to NewsWave!");
-      setTimeout(() => {
-        window.location.href = "../index.html";
-      }, 1400);
-
-    } catch (err) {
-      showAlert("error", "Something went wrong. Please try again.");
-    } finally {
+    const users = JSON.parse(localStorage.getItem("ca_users") || "[]");
+    if (users.find(u => u.email === email)) {
+      showAlert("error", "An account with this email already exists.");
       setLoading(false);
+      return;
     }
+
+    users.push({ firstname, lastname, email, password: btoa(password), createdAt: new Date().toISOString() });
+    localStorage.setItem("ca_users", JSON.stringify(users));
+    localStorage.setItem("ca_session", JSON.stringify({
+      name: firstname + " " + lastname,
+      email, loggedIn: true,
+    }));
+
+    showAlert("success", `✓ Account created! Welcome, ${firstname}!`);
+    setTimeout(() => { window.location.href = "../index.html"; }, 1300);
+    setLoading(false);
   });
 
-  // Real-time confirm password check
+  // live confirm check
   $("confirm")?.addEventListener("input", () => {
-    const pw  = $("password")?.value  || "";
-    const cfm = $("confirm")?.value   || "";
+    const pw  = $("password")?.value || "";
+    const cfm = $("confirm")?.value  || "";
     if (!cfm) return clearField("confirm");
-    if (cfm === pw) setValid("confirm");
-    else setError("confirm", "Passwords do not match.");
+    cfm === pw ? setValid("confirm") : setError("confirm", "Passwords don't match.");
   });
 }
-
-// ─────────────────────────────────────────────
-// FORGOT PASSWORD (stub)
-// ─────────────────────────────────────────────
-window.forgotPassword = function(e) {
-  e.preventDefault();
-  const email = $("email")?.value.trim();
-  if (!email || !isValidEmail(email)) {
-    setError("email", "Enter your email above first.");
-    $("email")?.focus();
-    return;
-  }
-  showAlert("success", `✓ Password reset link sent to ${email}`);
-};
-
-// ─────────────────────────────────────────────
-// SIMULATE API CALL
-// Replace this with your real backend / Firebase / Supabase etc.
-// ─────────────────────────────────────────────
-function simulateApiCall(ms) {
-  return new Promise((resolve, reject) => {
-    setTimeout(() => {
-      // Simulate ~90% success rate for demo
-      Math.random() > 0.05 ? resolve() : reject(new Error("Network error"));
-    }, ms);
-  });
-}
-
-// ─────────────────────────────────────────────
-// ENTER KEY submit
-// ─────────────────────────────────────────────
-document.addEventListener("keydown", e => {
-  if (e.key === "Enter") {
-    const form = loginForm || signupForm;
-    if (form) form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
-  }
-});
